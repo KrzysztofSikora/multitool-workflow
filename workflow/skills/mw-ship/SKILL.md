@@ -6,11 +6,13 @@ description: Run a planned roadmap item through the shared workflow using Codex 
 # Run a change
 
 Read AGENTS.md and .workflow-kit/config.toml. Confirm the roadmap item exists and the tree
-is clean. Use the requested engine, defaulting to Codex when none is specified.
+is clean. Choose one engine for the entire change, defaulting to Codex when unspecified.
+All planning, implementation, mutation and review sessions use that engine. Resume and PR
+follow-ups must use the recorded engine; a different roadmap item may choose the other tool.
 
 ```bash
 python3 .workflow-kit/run.py ship S-01 --engine codex
-python3 .workflow-kit/run.py resume S-01 --engine claude
+python3 .workflow-kit/run.py resume S-01 --engine codex
 ```
 
 These commands prepare local commits and a PR description. Add `--publish` only when the

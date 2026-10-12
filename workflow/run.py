@@ -199,18 +199,31 @@ def resolve(root, item):
     raise Failure(f'Item {item} is not in the roadmap Overview table.')
 
 class Runner:
-    def __init__(self, root, config, engine, change, issue='', review_engine=None):
+    def __init__(self, root, config, engine, change, issue=''):
         self.root, self.config, self.engine = root, config, engine
-        self.review_engine = review_engine or engine
         self.change, self.issue = change, issue
         self.dir = root/'context/changes'/change
         self.runtime = root/'.workflow'/change
         self.state_path = self.runtime/'state.json'
         self.state = json.loads(read(self.state_path) or '{}')
+        self.execution_path = self.dir/'execution.json'
+        self.check_engine()
         self.branch = 'change/'+change
         self.base = ''
         self.runtime.mkdir(parents=True,exist_ok=True)
         self.dir.mkdir(parents=True,exist_ok=True)
+
+    def check_engine(self):
+        execution = json.loads(read(self.execution_path) or '{}')
+        if self.execution_path.is_file() and (execution.get('schema') != 1 or execution.get('engine') not in {'codex','claude'}):
+            raise Failure('Invalid execution.json: expected schema 1 and a supported engine.')
+        recorded = {value['engine'] for value in self.state.values()
+                    if isinstance(value,dict) and value.get('engine')}
+        recorded.update(value for value in (execution.get('engine'),self.state.get('run_engine')) if value)
+        if recorded and recorded != {self.engine}:
+            raise Failure(f'Change {self.change} is assigned to {", ".join(sorted(recorded))}. '
+                          f'Resume with its original engine; choose {self.engine} for a different roadmap item. '
+                          'Mixed-engine runs are not supported.')
 
     def signature(self, step):
         if step == 'plan-review':
@@ -229,7 +242,7 @@ class Runner:
     def current(self, step):
         receipt = self.state.get(step,{})
         path = self.dir/artifact(step)
-        return (receipt.get('signature') == self.signature(step) and path.is_file()
+        return (receipt.get('engine') == self.engine and receipt.get('signature') == self.signature(step) and path.is_file()
                 and receipt.get('artifact') == digest(path.read_bytes()))
 
     def preflight(self):
@@ -263,6 +276,7 @@ class Runner:
         require_clean(self.root)
 
     def step(self, step, extra='', output=None, required_keys=()):
+        self.check_engine()
         require_clean(self.root)
         self.preflight()
         target = output or self.dir/artifact(step)
@@ -270,8 +284,9 @@ class Runner:
         started_ns = time.time_ns()
         code_before = code_signature(self.root)
         plan_before = read(self.dir/'plan.md')
+        execution_before = read(self.execution_path)
         head = git(self.root,'rev-parse','HEAD')
-        engine = self.review_engine if step in {'review','plan-review'} else self.engine
+        engine = self.engine
         model = self.config.get(engine,{}).get('model') or None
         prompt = (f'Execute step {step} for change-id {self.change}. Arguments: {self.change}. '
                   f'Base ref: {self.base}. Output: {target.relative_to(self.root)}.\n'
@@ -296,6 +311,9 @@ class Runner:
             raise Failure(f'{step}: CLI failed ({returncode}); inspect {log.relative_to(self.root)}')
         if git(self.root,'rev-parse','HEAD') != head or git(self.root,'branch','--show-current') != self.branch:
             raise Failure('Agent changed Git history or branch. Inspect manually; no automatic recovery.')
+        if read(self.execution_path) != execution_before:
+            raise Failure('Session modified the committed engine selection; inspect the diff.')
+        self.check_engine()
         if (self.root/'.workflow/stuck').exists():
             raise Failure('Agent reported stuck; see .workflow/stuck and plan deviations.')
         if not target.is_file() or target.stat().st_mtime_ns <= started_ns:
@@ -346,7 +364,17 @@ class Runner:
             raise Failure('Gates changed tracked inputs; commit intentional outputs and rerun.')
         atomic(self.runtime/'gates.json',{'signature':signature,'results':results,'final':final})
 
+    def bind_engine(self):
+        self.check_engine()
+        require_clean(self.root)
+        if not self.execution_path.is_file():
+            atomic(self.execution_path,{'schema':1,'engine':self.engine})
+            self.commit(f'docs({self.change}): select {self.engine} for the complete workflow')
+        self.state['run_engine']=self.engine
+        atomic(self.state_path,self.state)
+
     def pipeline(self):
+        self.bind_engine()
         plan=self.dir/'plan.md'
         if not plan.is_file():
             self.step('plan')
@@ -438,6 +466,7 @@ class Runner:
             return False
 
     def _ready(self):
+        self.check_engine()
         gates=json.loads(read(self.runtime/'gates.json') or '{}')
         return (all(phases(read(self.dir/'plan.md'))) and self.current('review') and
                 verdict(read(self.dir/'review.md'),{'APPROVE','APPROVE WITH FOLLOW-UPS','CHANGES REQUESTED'})!='CHANGES REQUESTED'
@@ -448,7 +477,7 @@ class Runner:
                 and (not self.config.get('mutation',{}).get('enabled') or self.current('mutation')))
 
     def finish(self, reason='', publish=False):
-        summary=f'# Run: {self.change}\n\nEngine: {self.engine}\nReview engine: {self.review_engine}\nOutcome: {reason or "verified"}\n'
+        summary=f'# Run: {self.change}\n\nEngine: {self.engine}\nOutcome: {reason or "verified"}\n'
         (self.root/'.workflow/run-summary.md').write_text(summary)
         self.step('pr-body',f'Run outcome: {reason or "verified"}. Include all costly decisions and open human checks. '
                   f'Issue: {self.issue or "none"}. Include Closes #{self.issue} only if an issue exists.')
@@ -456,6 +485,7 @@ class Runner:
             self.publish(reason)
 
     def publish(self, reason=''):
+        self.check_engine()
         require_clean(self.root)
         if git(self.root,'branch','--show-current')!=self.branch:
             raise Failure('Publish only from the change branch.')
@@ -560,7 +590,6 @@ def main():
     parser.add_argument('action',choices=['project','ship','resume','publish','address-pr','doctor'])
     parser.add_argument('item',nargs='?')
     parser.add_argument('--engine',choices=['codex','claude'],default='codex')
-    parser.add_argument('--review-engine',choices=['codex','claude'])
     parser.add_argument('--base',default='main')
     parser.add_argument('--publish',action='store_true',help='Authorize pushing the change branch and creating/updating a PR.')
     parser.add_argument('--reviewer',action='append',default=[],help='Additional trusted PR reviewer login; default is authenticated user only.')
@@ -570,7 +599,7 @@ def main():
     config=load_config(root)
     with lock(root):
         if args.action=='doctor':
-            for engine in {args.engine,args.review_engine or args.engine}:
+            for engine in (args.engine,):
                 if not shutil.which(engine):
                     raise Failure(f'{engine} CLI is missing.')
                 command([engine,'--version'],root)
@@ -599,7 +628,7 @@ def main():
         else:
             item=args.item
         change,issue=resolve(root,item)
-        runner=Runner(root,config,args.engine,change,issue,args.review_engine)
+        runner=Runner(root,config,args.engine,change,issue)
         runner.base=args.base
         runner.preflight()
         if args.base.startswith('-'):
@@ -612,6 +641,7 @@ def main():
             command(['git','switch','-c',runner.branch,'origin/'+runner.branch],root)
         else:
             command(['git','switch','-c',runner.branch,args.base],root)
+        runner.check_engine()
         if args.action=='publish':
             if not args.publish:
                 raise Failure('Use --publish to authorize external publication.')
@@ -621,6 +651,7 @@ def main():
             reviewers.add(command(['gh','api','user','--jq','.login'],root).stdout.strip())
             command(['git','fetch','origin',runner.branch],root)
             command(['git','merge','--ff-only','origin/'+runner.branch],root)
+            runner.check_engine()
             runner.address(args.item,reviewers,args.publish)
         else:
             reason=runner.pipeline()

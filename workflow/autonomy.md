@@ -97,3 +97,10 @@ no slash command substitution or engine-specific fork metadata is required. Do n
 commit, switch branches, stash, push, create PRs or send messages. The runner owns them.
 Project-specific restrictions (devices, data, network, privacy) belong to the target
 project AGENTS.md and configured preflight commands; do not assume mobile-specific rules.
+
+## 9. One engine per complete workflow
+
+The engine selected at the start owns every session for the change, including plan review,
+code review and PR follow-ups. Do not delegate a step to another engine. Fresh sessions
+provide review separation within the selected tool. execution.json records the choice;
+resume with the same engine. Choose another engine when starting a different roadmap item.

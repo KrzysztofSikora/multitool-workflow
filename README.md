@@ -1,104 +1,110 @@
 # Multitool Workflow
 
-Jedna metodyka budowania aplikacji, wspólne skills i runner z adapterami **Codex** oraz
-**Claude Code**. Możesz wykonać S-01 przez Codex, S-02 przez Claude albo wznowić tę samą
-zmianę innym narzędziem. Stan przekazują pliki i Git; historia rozmowy nie jest przenoszona.
+A shared, spec-driven methodology for building applications with **either Codex or Claude
+Code**. Choose the tool when starting a change. That tool executes the complete workflow:
+planning, plan review, implementation, mutation analysis, code review, and PR follow-ups.
 
-To zestaw do instalacji w repozytorium aplikacji. Nie wymaga chmury ani konta aplikacji;
-same CLI wymagają własnego logowania i mogą naliczać opłaty zgodnie z Twoim planem.
+**One complete change workflow, one engine.** There is no per-step engine routing. You can
+run S-01 entirely with Codex and S-02 entirely with Claude. Reviews use fresh sessions of
+the selected engine. The methodology, artifact formats, and quality gates remain shared.
 
 ```mermaid
 flowchart TD
-    M[Wspólna metodyka i skills] --> R[Wspólny runner]
-    R --> C[Adapter Codex]
-    R --> A[Adapter Claude]
-    C --> S[context/ i Git w repozytorium aplikacji]
-    A --> S
-    S --> P[Plan → Review planu → Fazy implementacji]
-    P --> Q[Mutation → Review i poprawki → Gates]
-    Q --> PR[Pull Request]
-    PR --> H[Decyzja człowieka]
-    H --> R
+    Choose{Choose one engine for the whole run}
+    Choose --> C[Complete workflow using Codex]
+    Choose --> A[Complete workflow using Claude]
+    C --> Method[Same methodology, artifacts and gates]
+    A --> Method
+    Method --> PR[Pull request and human decisions]
 ```
 
-## Wymagania
+This toolkit is installed into an application repository. It does not host the application
+or require a central workflow service. Each CLI requires its own authentication and may
+consume usage or incur costs according to your account settings.
 
-- Linux lub macOS, Python **3.11+**, Git i Bash. Windows: WSL.
-- Wybrane CLI (`codex` albo `claude`) z działającym logowaniem.
-- Przy publikacji: `gh`, `gh auth login`, dostęp do `origin` i możliwość push.
-- Toolchain aplikacji oraz przygotowane commands gates; instalator nie instaluje zależności.
-- Repozytorium aplikacji z pierwszym commitem i domyślną gałęzią, np. `main`.
+## Requirements
 
-Sprawdź pomoc zainstalowanych CLI. Adaptery sprawdzono względem lokalnego Codex CLI
-0.159.2 i pomocy lokalnego Claude CLI; formaty opcji mogą zmieniać się pomiędzy wersjami.
-Nie są wymagane konkretne modele: pusta nazwa w konfiguracji używa domyślnego modelu CLI.
+- Linux or macOS, Python **3.11+**, Git, and Bash. On Windows, use WSL.
+- The selected CLI (`codex` **or** `claude`), authenticated and configured. Both are not required.
+- For publication: authenticated `gh`, an `origin` remote, and push access.
+- The application's toolchain and real gate commands.
+- A Git repository with an initial commit and a base branch, usually `main`.
 
-## 1. Instalacja w nowej aplikacji
+The adapter options were checked against local Codex CLI 0.159.2 and local Claude CLI help.
+CLI interfaces can change; verify your installed versions. No model identifiers are hard-coded:
+empty model settings use the selected CLI's configured default.
 
-Sklonuj ten toolkit poza repozytorium aplikacji. Zamiast `main` można użyć konkretnego
-commita/tagu, aby wybrać sprawdzoną wersję.
+## Install into an application repository
+
+Clone the toolkit outside your application. Pin a reviewed toolkit commit or tag when you
+need reproducible installations.
 
 ```bash
 git clone https://github.com/KrzysztofSikora/multitool-workflow.git
-mkdir moja-aplikacja
-cd moja-aplikacja
+mkdir my-app
+cd my-app
 git init -b main
 git commit --allow-empty -m 'chore: initialize repository'
 python3 ../multitool-workflow/install.py .
 ```
 
-Instalator dodaje:
+The installer adds:
 
 ```text
-.workflow-kit/             # przypięta kopia runnera i metodyki
-  run.py
-  autonomy.md
-  config.toml
-  VERSION                 # commit źródłowy toolkitu
-  skills/mw-*/SKILL.md     # jedno źródło instrukcji
-.agents/skills/mw-*        # dowiązania do wspólnych skills dla Codex
-.claude/skills/mw-*        # dowiązania do tych samych skills dla Claude
-AGENTS.md                 # szablon, tylko jeśli plik nie istnieje
-CLAUDE.md                 # odsyłacz do AGENTS.md, tylko jeśli nie istnieje
-context/                  # artefakty aplikacji
+.workflow-kit/
+  run.py                    # shared runner with two alternative adapters
+  autonomy.md               # shared decision policy
+  config.toml               # application-specific commands and CLI settings
+  VERSION                   # source toolkit commit
+  skills/mw-*/SKILL.md       # one canonical set of instructions
+.agents/skills/mw-*          # Codex discovery links to canonical skills
+.claude/skills/mw-*          # Claude discovery links to the same skills
+AGENTS.md                   # created only if missing
+CLAUDE.md                   # created only if missing; references AGENTS.md
+context/                    # application artifacts
 ```
 
-Istniejące AGENTS.md i CLAUDE.md pozostają zachowane. Kolizja skill lub istniejący
-`.workflow-kit` blokuje instalację. Instalator dopisuje `.workflow/` do `.gitignore`.
-Nie zmienia globalnych ustawień, uprawnień, hooków ani logowania żadnego narzędzia.
-Jeżeli masz własny CLAUDE.md, dodaj w nim polecenie odczytania AGENTS.md.
+Installing both discovery directories does not run both tools. The selected adapter is
+the only one launched. Existing AGENTS.md and CLAUDE.md are preserved. Existing toolkit
+installations or colliding skills block installation. `.workflow/` is added to `.gitignore`.
+Global settings, permissions, hooks, and authentication are not changed.
 
-Uzupełnij AGENTS.md: opis aplikacji, granice warstw, zasady danych i gates. Następnie
-zapisz instalację w Git, wskazując konkretne ścieżki:
+Fill in AGENTS.md with your application's purpose, architecture, data rules, and gates.
+If an existing CLAUDE.md does not reference AGENTS.md, add that reference yourself.
+Commit the installation before proceeding:
 
 ```bash
 git add .workflow-kit .agents .claude AGENTS.md CLAUDE.md .gitignore
 git commit -m 'chore: install multitool workflow'
 ```
 
-## 2. Projektowanie aplikacji — interaktywnie
+## Project setup: interactive
 
-Pięć kroków wykonujesz raz dla projektu. Po każdym sprawdź artefakt, zatwierdź go w rozmowie
-i zacommituj przed następnym krokiem. Runner wymaga czystego drzewa na wejściu.
+Choose your tool for the setup sequence. These examples use Codex; set `ENGINE=claude`
+to perform the same sequence with Claude instead.
 
 ```bash
-python3 .workflow-kit/run.py project shape --engine codex --input brief.md
-python3 .workflow-kit/run.py project prd --engine codex
-python3 .workflow-kit/run.py project tech-stack --engine claude
-python3 .workflow-kit/run.py project roadmap --engine codex
-python3 .workflow-kit/run.py project test-plan --engine claude
+ENGINE=codex
+python3 .workflow-kit/run.py project shape --engine "$ENGINE" --input brief.md
+python3 .workflow-kit/run.py project prd --engine "$ENGINE"
+python3 .workflow-kit/run.py project tech-stack --engine "$ENGINE"
+python3 .workflow-kit/run.py project roadmap --engine "$ENGINE"
+python3 .workflow-kit/run.py project test-plan --engine "$ENGINE"
 ```
 
-Powstają kolejno `context/shape-notes.md`, `prd.md`, `tech-stack.md`, `roadmap.md`,
-`test-plan.md`. Brief powinien być wcześniej zapisany i zacommitowany w repozytorium.
-Metodyka obejmuje wymagania testowalne, decyzje technologiczne, fundamenty i pionowe
-przekroje funkcjonalne, ryzyka oraz strategię testów.
+Run these commands one at a time. Review and approve each artifact in the conversation,
+then commit it before starting the next step. The brief must already be committed. The
+runner requires a clean working tree at entry, including untracked files.
 
-Możesz też poprosić narzędzie w zwykłej rozmowie o odczytanie odpowiedniego SKILL.md.
-Prefiks `mw-` unika konfliktu z wbudowanymi poleceniami typu `/review`. Runner czyta
-instrukcje przez ścieżkę — nie zależy od obsługi slash commands ani `$ARGUMENTS`.
+The outputs are `context/shape-notes.md`, `prd.md`, `tech-stack.md`, `roadmap.md`, and
+`test-plan.md`. They cover requirements, technology decisions, foundations and vertical
+slices, acceptance criteria, risks, and test strategy.
 
-Roadmap musi mieć tabelę Overview z kolumnami:
+Skills have the `mw-` prefix to avoid built-in command collisions. The runner supplies an
+explicit skill path and arguments; it does not depend on `$ARGUMENTS`, slash-command expansion,
+or engine-specific fork metadata.
+
+The roadmap must contain an Overview table:
 
 ```markdown
 ## Overview
@@ -106,14 +112,15 @@ Roadmap musi mieć tabelę Overview z kolumnami:
 |----|-------|-----------|--------|
 | F-01 | #1 | scaffold | todo |
 | S-01 | #2 | first-feature | todo |
+| S-02 | #3 | second-feature | todo |
 ```
 
-`change-id`: małe litery, cyfry i myślniki. Issue to istniejący numer issue GitHub lub `-`.
-Runner nie tworzy issues automatycznie.
+Change IDs use lowercase letters, digits, and hyphens. Issue is an existing GitHub issue
+number or `-`. The runner does not create issues.
 
-## 3. Konfiguracja gates i uprawnień
+## Configure quality gates and access
 
-Edytuj `.workflow-kit/config.toml`, np. dla aplikacji TypeScript:
+Edit `.workflow-kit/config.toml`. For example, a TypeScript application might use:
 
 ```toml
 [gates]
@@ -126,142 +133,148 @@ reason = ""
 commands = ["pnpm mutation --mutate packages/domain/src/validation.ts"]
 ```
 
-Komendy muszą już działać. `fast` uruchamia się po każdej fazie, przed commitem; `final`
-przed niezależnym code review. Polecenia są zaufanym kodem projektu wykonywanym przez Bash
-na Twoim komputerze. Runner sam nie ogranicza ich dostępu do sieci lub urządzeń.
+Use real commands for your project and keep the AGENTS.md gate table synchronized. Fast
+gates run before each phase commit; final gates run before independent code review and
+after fixes. Mutation can be disabled only with an explicit reason, recorded in its artifact.
+Empty fast or final gate lists block execution. For a first scaffold, configure the intended
+gates; the implementation phase creates the scripts before the runner executes them.
 
-Mutation można wyłączyć, ale wymaga jawnego `reason`; pominięcie jest zapisane w artefakcie
-oraz powinno być pokazane w PR. Puste fast/final blokują przebieg. Przy pierwszym scaffold
-przygotuj commands docelowe; etap implementacji tworzy skrypty i uruchamia je przed commitem.
+Configure only the CLI you will use. Codex headless uses `workspace-write` and
+`approval_policy="never"`; operations requiring manual permission are denied. Claude uses
+`auto` with `--permission-prompts none`. If auto is unavailable, use `acceptEdits` with your
+own narrowly configured command permissions. Interactive setup uses the CLI's normal settings.
 
-Codex headless używa `workspace-write` i `approval_policy="never"`: operacja wymagająca
-ręcznej zgody będzie odmówiona. Claude domyślnie używa `auto` z `--permission-prompts none`.
-Dostępność auto zależy od Twojego CLI/konta; można ustawić `acceptEdits` z własnymi
-uprawnieniami do koniecznych poleceń. Interaktywne kroki projektu zachowują ustawienia CLI.
-
-Nie ma domyślnego bypassu sandboxa, automatycznego zaufania hookom ani modyfikacji globalnych
-allowlists. Jeśli testy wymagają dodatkowych zasobów, skonfiguruj dostęp przed runem. Zasada
-„nie pytaj w trakcie” nie nadaje uprawnień. Hooki mogą być dodatkową ochroną, lecz nie są
-wymagane do przekazywania stanu i kontroli wyników przez runner.
+The runner does not enable permission bypasses or trust hooks automatically. Prepare required
+access before starting. Gate and preflight commands are trusted project code executed by the
+local runner, outside the model's sandbox, with the runner user's permissions.
 
 ```bash
 python3 .workflow-kit/run.py doctor --engine codex
 ```
 
-Doctor sprawdza CLI i konfigurację; nie uruchamia modeli, gates ani testu logowania.
-Po konfiguracji zacommituj zmiany przed uruchomieniem ship.
+Doctor checks the chosen CLI and configuration. It does not run a model, gates, or an
+authentication test. Commit configuration changes before starting a workflow.
 
-## 4. Wykonanie roadmap item
+## Run a complete workflow
 
 ```bash
-# Lokalne commity i opis PR, bez push i GitHub:
+# Run the entire first change with Codex; local commits and PR description only:
 python3 .workflow-kit/run.py ship S-01 --engine codex
 
-# Z autoryzacją publikacji branch i PR:
-python3 .workflow-kit/run.py ship S-01 --engine claude --publish
-
-# Implementacja Codex, niezależne review przez Claude:
-python3 .workflow-kit/run.py ship S-01 --engine codex --review-engine claude --publish
+# Run an entirely different change with Claude and authorize publication:
+python3 .workflow-kit/run.py ship S-02 --engine claude --publish
 ```
 
-Przebieg: plan → review planu → ewentualne poprawki planu → implementacja jednej fazy na
-świeżą sesję → mutation → gates → review → poprawki → ponowne mutation/gates/review → opis PR.
-Każdy krok ma osobny proces CLI. Runner wykonuje commity i publikację; agent tylko edytuje.
+Each run follows the same sequence:
 
-Runner przełącza checkout na `change/<change-id>`. Domyślny base to `main`; inny wybierasz
-przez `--base develop`. Blokada w wspólnym katalogu Git dopuszcza jeden runner na repozytorium,
-także dla jego worktrees. Pierwsza wersja celowo nie uruchamia równoległych zmian w jednym repo.
+```text
+plan → plan review → plan corrections if needed → implementation phases
+     → mutation → final gates → code review → fixes and fresh verification
+     → PR description → optional push and pull request
+```
 
-Wynik zawiera:
+The runner records the selected engine in `context/changes/<id>/execution.json`, committed
+on the change branch. Every session and receipt uses that engine. Each phase and review
+gets a fresh process of the same CLI. There is no `--review-engine` option.
 
-- `context/changes/<id>/plan.md`: fazy, decyzje D-n, odchylenia, otwarte human checks;
-- `plan-review.md`, `mutation.md`, `review.md`, `pr-body.md` i ewentualne `evidence/`;
-- `.workflow/<id>/state.json`: potwierdzenia kroków z fingerprintem wejść i hashami artefaktów;
-- `.workflow/<id>/*.jsonl`, gate logs: lokalne logi sesji i weryfikacji;
-- `.workflow/run-summary.md`: ostatni przebieg.
+The runner switches the checkout to `change/<change-id>`. The default base is `main`; use
+`--base develop` for a different base. A Git-directory lock permits one active runner per
+repository, including its worktrees. Agents edit files; the runner owns commits and publication.
 
-Logi mogą zawierać fragmenty kodu i odpowiedzi narzędzi. Są gitignored, nie trafiają do PR.
-Nie podawaj sekretów modelowi ani commands gates. Runner nie jest skanerem sekretów.
+Important outputs:
 
-## 5. Wznowienie i zmiana narzędzia
+- `plan.md`: phases, decisions D-n, deviations, and open human checks;
+- `execution.json`: the selected engine for the complete change;
+- `plan-review.md`, `mutation.md`, `review.md`, `pr-body.md`, and optional `evidence/`;
+- `.workflow/<id>/state.json`: local step receipts with input fingerprints and artifact hashes;
+- `.workflow/<id>/*.jsonl` and gate logs: local diagnostic evidence;
+- `.workflow/run-summary.md`: the latest outcome.
+
+Runtime logs are gitignored and are not included in PRs. They may contain code and tool output;
+review them before sharing. Never supply secrets to sessions or gate commands.
+
+## Resume and publish
+
+Resume with the **same engine** used to start the change:
 
 ```bash
-python3 .workflow-kit/run.py resume S-01 --engine claude --publish
+python3 .workflow-kit/run.py resume S-01 --engine codex --publish
 ```
 
-Ship i resume używają tej samej walidacji. Ukończone fazy są odczytywane z planu, a aktualne
-review/mutation z potwierdzeń. Zmiana kodu, planu, zasad lub konfiguracji unieważnia dowody.
-Nowy engine nie potrzebuje historii rozmowy poprzednika.
+Trying to resume that Codex change with Claude is rejected. To use Claude, choose a different
+roadmap item for a new complete workflow. The committed engine record preserves this rule
+across clones; local receipts are supplementary state, not a replacement for the record.
+Older mixed-engine receipts are rejected instead of silently accepted.
 
-Po błędzie runner zachowuje diff. Nie robi automatycznie `git add -A`, stash ani reset.
-Sprawdź `git status`, log i diff; popraw/commituj potrzebne pliki, następnie wznow.
-Jeśli implementacja zdążyła zaznaczyć fazę przed nieudanym gate, zweryfikuj ją i cofnij
-checkbox, jeśli faza rzeczywiście pozostaje niedokończona. Nie zatwierdzaj niezweryfikowanej fazy.
+Completed phases are read from the plan. Changes to code, design decisions, constraints,
+or configuration invalidate verification evidence. Missing local state causes review and
+required mutation to run again with the recorded engine.
 
-Samo przygotowanie planu i review w nowym clone nie odtwarza lokalnych potwierdzeń;
-review oraz mutation będą wykonywane ponownie. Poza checkboxami ukończonych faz runner
-nie ufa deklaracjom z rozmowy. Nie tworzy commita automatycznie dla nieudanego kroku.
+A failed session preserves the diff. Inspect the log, branch, `git status`, and changes.
+Repair and commit deliberate changes before resuming; never mark an unverified phase complete.
+If a failed phase already ticked its checkbox, restore the checkbox when the phase remains
+unfinished. The runner does not automatically stash, reset, or bulk-commit failed work.
 
-Publikacja przygotowanego wyniku bez kolejnej sesji:
+Publish an existing local result without another model session:
 
 ```bash
 python3 .workflow-kit/run.py publish S-01 --engine codex --publish
 ```
 
-PR jest gotowy tylko przy aktualnym zaakceptowanym review planu, ukończonych fazach,
-aktualnych final gates, code review bez otwartych findings i wymaganym mutation. Brak dowodów
-lub nierozwiązane review oznacza draft. Aktualizacja istniejącego PR może przywrócić draft.
-Runner nigdy nie scala PR. Nieudane gates zatrzymują lokalnie; opis PR można przygotować
-po ręcznej ocenie zachowanego diffu. Limity review kończą się opisem i opcjonalnym draft PR.
+A PR is ready only with completed phases and current plan-review, final-gate, code-review,
+and required mutation evidence. Missing or stale evidence produces a draft. Open findings
+or unresolved review decisions also keep it draft. The runner never merges PRs.
+CLI or gate failures stop locally; bounded review exhaustion can produce a description and
+optional draft PR. There is no automatic conversion of arbitrary failed local work into a PR.
 
-## 6. Decyzje człowieka w PR
+## Apply human decisions from a PR
 
-Sprawdź sekcję decyzji, odchylenia, evidence i human checks. Komentarze mogą wskazywać np.:
+Review costly decisions, deviations, evidence, and human checks. Add comments such as:
 
 ```text
-D-3: wybierz opcję B.
-R4: popraw obsługę timeout.
-Human check: ekran działa poprawnie.
+D-3: choose option B.
+R4: fix timeout handling.
+Human check: the screen behaves correctly.
 ```
 
-Następnie:
+Apply them using the engine already assigned to the change:
 
 ```bash
 python3 .workflow-kit/run.py address-pr 42 --engine codex --publish
-# Jeżeli autoryzujesz także uwagi konkretnego współpracownika:
-python3 .workflow-kit/run.py address-pr 42 --engine claude --reviewer LOGIN --publish
+# Optionally authorize comments from a specific additional reviewer:
+python3 .workflow-kit/run.py address-pr 42 --engine codex --reviewer LOGIN --publish
 ```
 
-Obsługiwane są otwarte PR w tym samym repo, z branch `change/*`. Runner pobiera nowy stan
-branch, filtruje komentarze według zaufanych autorów, stosuje uwagi, weryfikuje zmianę,
-aktualizuje PR i publikuje jedną zbiorczą odpowiedź z pozycją dla każdego komentarza.
-Markery odpowiedzi chronią przed ponownym zastosowaniem już obsłużonych komentarzy.
-Fork PR nie jest obsługiwany. Nie traktuj komentarzy innych autorów jako autoryzacji działań.
+Only open, same-repository `change/*` PRs are supported. The runner fetches the branch,
+filters comments by authorized authors, applies decisions, verifies the result, updates
+the PR, and posts one combined reply with an entry for each comment. Reply markers prevent
+duplicate application. Add a new comment to revise an already handled decision.
 
-## Testowanie toolkitu
+## Testing and optional CI
 
 ```bash
 python3 -m unittest discover -s tests -v
 ```
 
-Testy instalują toolkit w tymczasowych repozytoriach i wykonują przebiegi z atrapami CLI.
-Obejmują oba adaptery, zmianę engine przy wznowieniu, fazy, gates, aktualność dowodów,
-blokadę runów i ochronę przed nadpisaniem instalacji. Nie uruchamiają płatnych modeli.
-Rzeczywiste sesje modeli oraz zdalna publikacja wymagają osobnego pilota w repo aplikacji.
+Tests use temporary Git repositories and fake CLIs, without paid model sessions. They cover
+complete runs with each engine, same-engine resumption, rejection of engine mixing, persistence
+of engine selection, gates, review freshness, publication, and authorized comment handling.
+Real model execution and authentication still require a pilot in a test application repository.
 
-## Opcjonalne GitHub Actions
+`templates/github-checks.yml` tests the toolkit on Python 3.11 and 3.13. To activate it,
+copy it to `.github/workflows/checks.yml` and commit with credentials allowed to modify
+GitHub Actions. Active CI is not installed automatically. Application CI needs its own gates.
 
-Szablon `templates/github-checks.yml` uruchamia testy toolkitu dla Python 3.11 i 3.13.
-Aby włączyć go w tym repo, skopiuj plik do `.github/workflows/checks.yml` i zacommituj.
-Logowanie użyte do push musi pozwalać na zmianę GitHub Actions (scope `workflow` lub
-odpowiednie uprawnienie tokena). Pierwsza publikacja zawiera szablon, bez aktywnego CI.
-To CI testuje toolkit; aplikacja powinna mieć własną konfigurację gates w swoim CI.
+## Design assessment and further documentation
 
-## Dalsza dokumentacja
+The approach is useful when you want one development process with a choice of provider,
+without coordinating providers inside a run. It does not guarantee identical decisions or
+execution permissions across tools. Read the [design assessment](docs/design-assessment.md)
+for the trade-offs, remaining validation, and recommendation.
 
-- [Architektura i kontrakty](docs/architecture.md)
-- [Aktualizacja i ograniczenia](docs/operations.md)
-- [Zasady autonomii](workflow/autonomy.md)
-- Oficjalny [Codex non-interactive](https://learn.chatgpt.com/docs/non-interactive-mode),
-  [Codex skills](https://learn.chatgpt.com/docs/build-skills) i
+- [Architecture and contracts](docs/architecture.md)
+- [Operations, upgrades, and limitations](docs/operations.md)
+- [Shared autonomy policy](workflow/autonomy.md)
+- Official [Codex non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode),
+  [Codex skills](https://learn.chatgpt.com/docs/build-skills), and
   [Claude programmatic usage](https://code.claude.com/docs/en/headless).

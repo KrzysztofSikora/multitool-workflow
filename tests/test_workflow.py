@@ -76,15 +76,80 @@ class Repository(unittest.TestCase):
         r=wf.Runner(self.root,wf.load_config(self.root),engine,'example','1')
         r.base='main'; return r
 
-    def test_pipeline_and_cross_engine_resume(self):
+    def test_pipeline_and_same_engine_resume(self):
         r=self.runner(); self.assertEqual(r.pipeline(),''); r.finish()
         self.assertTrue(r.ready()); first=self.git('rev-parse','HEAD')
-        r=wf.Runner(self.root,wf.load_config(self.root),'claude','example','1'); r.base='main'
+        r=wf.Runner(self.root,wf.load_config(self.root),'codex','example','1'); r.base='main'
         self.assertEqual(r.pipeline(),''); self.assertEqual(self.git('rev-parse','HEAD'),first)
         self.assertTrue(r.ready())
         commits=self.git('log','--format=%s','main..HEAD').splitlines()
         self.assertEqual(sum(x.startswith('feat(example): implement') for x in commits),1)
         self.assertEqual(self.git('status','--porcelain'),'')
+
+    def test_resume_rejects_different_engine_without_mutations(self):
+        r=self.runner(); r.pipeline(); r.finish()
+        head=self.git('rev-parse','HEAD')
+        state=(r.runtime/'state.json').read_bytes()
+        with self.assertRaisesRegex(wf.Failure,'original engine'):
+            wf.Runner(self.root,wf.load_config(self.root),'claude','example','1')
+        self.assertEqual(self.git('rev-parse','HEAD'),head)
+        self.assertEqual((r.runtime/'state.json').read_bytes(),state)
+        self.assertTrue(wf.clean(self.root))
+
+    def test_engine_selection_survives_loss_of_local_state(self):
+        r=self.runner('claude'); r.pipeline()
+        import shutil
+        shutil.rmtree(r.runtime)
+        with self.assertRaises(wf.Failure):
+            wf.Runner(self.root,wf.load_config(self.root),'codex','example','1')
+        restored=wf.Runner(self.root,wf.load_config(self.root),'claude','example','1')
+        self.assertEqual(restored.engine,'claude')
+
+    def test_engine_record_is_checked_after_branch_switch(self):
+        r=self.runner('claude'); r.pipeline()
+        import shutil
+        shutil.rmtree(r.runtime)
+        self.git('switch','main')
+        candidate=wf.Runner(self.root,wf.load_config(self.root),'codex','example','1')
+        self.git('switch','change/example')
+        head=self.git('rev-parse','HEAD')
+        with self.assertRaises(wf.Failure): candidate.bind_engine()
+        self.assertEqual(self.git('rev-parse','HEAD'),head)
+        self.assertTrue(wf.clean(self.root))
+
+    def test_every_step_uses_the_selected_engine(self):
+        for engine in ('codex','claude'):
+            with self.subTest(engine=engine):
+                # Use a separate change for each full run.
+                change='codex-change' if engine=='codex' else 'claude-change'
+                self.git('switch','main'); self.git('switch','-c','change/'+change)
+                r=wf.Runner(self.root,wf.load_config(self.root),engine,change,'1'); r.base='main'
+                self.assertEqual(r.pipeline(),''); r.finish()
+                receipts=[v for v in r.state.values() if isinstance(v,dict) and 'engine' in v]
+                self.assertTrue(receipts)
+                self.assertEqual({v['engine'] for v in receipts},{engine})
+                self.assertEqual(json.loads(r.execution_path.read_text())['engine'],engine)
+
+    def test_legacy_mixed_receipts_are_rejected(self):
+        r=self.runner(); r.pipeline()
+        r.state['review']['engine']='claude'; wf.atomic(r.state_path,r.state)
+        with self.assertRaisesRegex(wf.Failure,'Mixed-engine'):
+            wf.Runner(self.root,wf.load_config(self.root),'codex','example','1')
+
+    def test_session_cannot_change_committed_engine_selection(self):
+        r=self.runner(); r.bind_engine(); r.step('plan'); r.step('plan-review')
+        cli=self.bin/'codex'
+        cli.write_text(cli.read_text().replace("elif step=='implement':", "elif step=='implement':\n    (d/'execution.json').write_text(__import__('json').dumps(dict(schema=1,engine='claude')))"))
+        head=self.git('rev-parse','HEAD')
+        with self.assertRaisesRegex(wf.Failure,'engine selection'):
+            r.step('implement')
+        self.assertEqual(self.git('rev-parse','HEAD'),head)
+
+    def test_per_step_engine_option_is_not_supported(self):
+        result=subprocess.run(['python3',str(ROOT/'workflow/run.py'),'ship','S-01',
+                               '--engine','codex','--review-engine','claude'],cwd=self.root,capture_output=True,text=True)
+        self.assertEqual(result.returncode,2)
+        self.assertIn('unrecognized arguments',result.stderr)
 
     def test_claude_pipeline(self):
         r=self.runner('claude'); self.assertEqual(r.pipeline(),''); self.assertTrue(r.ready())

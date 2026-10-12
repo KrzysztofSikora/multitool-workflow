@@ -1,60 +1,80 @@
-# Architektura i kontrakty
+# Architecture and contracts
 
-## Trzy warstwy
+## Execution model
 
-1. **Metodyka:** canonical `workflow/skills/mw-*/SKILL.md` oraz autonomy.md. W aplikacji oba
-   katalogi discovery wskazują dowiązaniami na te same pliki.
-2. **Runner:** planuje wykonanie kroków, sprawdza artefakty, uruchamia gates, zapisuje
-   potwierdzenia, zarządza commitem i PR. Python standard library, bez usług centralnych.
-3. **Adapter:** buduje argv i przekazuje jawny prompt przez stdin do świeżego procesu CLI.
-   Wyjściowy JSONL jest logiem diagnostycznym, nie źródłem stanu przebiegu.
+Select **one engine for a complete change workflow**. Planning, plan review, implementation,
+mutation, code review, corrections, and PR follow-ups all run through that engine's adapter.
+There is no per-step routing. A different roadmap item may select the other engine.
 
-Nie zakładamy, że YAML `context: fork`, `$ARGUMENTS`, nazwa narzędzia do pytań lub procesów
-w tle jest wspólna między silnikami. Niezależny review oznacza nowy proces z plikami jako
-wejściem; reviewer nie dziedziczy historii planowania lub implementacji.
+The shared runner owns sequencing, state, verification, commits, and publication. The
+adapter owns CLI invocation and engine-specific options. Canonical skills define the
+methodology independently of CLI tool names or command expansion.
 
-## Artefakty
+```mermaid
+flowchart LR
+    Choice{Select one engine} --> Codex[Codex adapter]
+    Choice --> Claude[Claude adapter]
+    Codex --> Run[Entire change workflow]
+    Claude --> Run
+    Run --> State[Shared artifacts and Git]
+```
 
-| Artefakt | Autor / znaczenie |
-|----------|-------------------|
-| shape-notes, prd, tech-stack, roadmap, test-plan | Interaktywne projektowanie |
-| changes/id/plan.md | Cele, decyzje, fazy, human checks, odchylenia |
+Both discovery directories link to the same instructions. This does not launch both tools.
+Only the chosen CLI is required for execution. Explicit file paths replace assumptions about
+slash commands, argument substitution, background tools, or fork metadata.
+
+## Engine selection and review separation
+
+`context/changes/<id>/execution.json` stores the chosen engine and is committed to the change
+branch. Local state also records the engine and each receipt identifies the executing tool.
+Conflicting selection or legacy mixed-engine receipts stop the run. Resume and PR follow-ups
+keep the same engine. No CLI option overrides the engine for a specific step.
+
+Reviews run in fresh processes of the selected CLI, receiving the plan, code, and evidence
+rather than the author's conversation history. This separates session context, not model
+identity: correlated blind spots remain possible and human review is still required.
+
+## Artifacts
+
+| Artifact | Meaning |
+|----------|---------|
+| shape-notes, prd, tech-stack, roadmap, test-plan | Interactive project design |
+| changes/id/execution.json | Selected engine for the complete change |
+| plan.md | Goals, decisions, phases, human checks, deviations |
 | plan-review.md | READY / READY WITH NOTES / NEEDS CHANGES |
-| mutation.md | Raport lub jawny powód pominięcia |
+| mutation.md | Mutation report or explicit skip reason |
 | review.md | APPROVE / APPROVE WITH FOLLOW-UPS / CHANGES REQUESTED |
-| pr-body.md | Tytuł w pierwszej linii `# ` i opis PR |
-| replies.md | Odpowiedź dla każdego autoryzowanego komentarza |
-| .workflow/id/state.json | Lokalny cache potwierdzeń z hashami wejść i wyjść |
-| .workflow/id/gates.json | Wyniki commands dla danego fingerprintu wejść |
+| pr-body.md | First line `# <title>`, followed by the PR body |
+| replies.md | One reply entry per authorized comment |
+| .workflow/id/state.json | Local receipts with input and artifact hashes |
+| .workflow/id/gates.json | Gate results for a specific input fingerprint |
 
-Format planu i review znajduje się w odpowiednich skills. Markdown ma ścisłe linie
-`Verdict:` i `- Decision: open`; zmiana ich formatu powoduje odrzucenie kroku.
-Fazy muszą mieć kolejne numery i być ukończone w kolejności. Implementacja zaznacza dokładnie
-jedną fazę; runner weryfikuje różnicę i wykonuje commit z `Refs #n`.
+Plans and reviews use the contracts in their skills. `Verdict:` and `- Decision: open` are
+strict parser inputs. Phases have consecutive numbers and must be completed in order. Each
+implementation session ticks exactly one phase, independently checked before the runner commit.
 
-## Aktualność dowodów
+## Verification freshness
 
-Fingerprint aplikacji obejmuje nazwy, zawartość i tryby plików w Git oraz nieignorowane
-nowe pliki, poza `context/` i runtime `.workflow/`. Dodatkowo potwierdzenia obejmują plan,
-PRD, tech stack, test plan, lessons i konfigurację. Hash artefaktu wykrywa jego podmianę.
-Zmiana opisu PR nie unieważnia review kodu. Zmiana checkboxów Progress nie unieważnia
-zaakceptowanego projektu, ale nowe decyzje i pozostała treść planu wymagają nowego review.
+The application fingerprint covers paths, contents, and file modes in Git and nonignored
+new files, excluding `context/` and `.workflow/`. Receipts additionally include the plan,
+PRD, tech stack, test plan, lessons, and configuration. Artifact hashes detect replacement.
 
-Runner uruchamia final gates po poprawkach i nowy code review, zamiast uznawać samą triage
-findings za zgodę reviewera. Wykonanie powtórnego review może zapisać identyczny raport;
-liczy się jego zapis w nowej sesji i aktualny fingerprint, nie wymuszona zmiana treści.
+Editing PR prose does not invalidate code review. Completing Progress checkboxes does not
+invalidate accepted design; new decisions or other substantive plan changes require review.
+Fixes require new final gates and code review. Marking findings fixed is not reviewer approval.
+Required mutation evidence is also refreshed after relevant changes.
 
-## Git i publikacja
+## Git and publication ownership
 
-Agent dostaje instrukcję „nie modyfikuj historii Git”. Runner kontroluje branch i HEAD po
-sesji oraz commituje konkretne zmienione ścieżki. To kontrola po wykonaniu, nie zapora
-przeciw celowo nieposłusznemu agentowi. Właściwą granicą są uprawnienia CLI i środowisko.
+The runner requires a clean tree, including untracked files, before execution. It checks
+branch and HEAD after each session and stages explicit changed paths for commits. Failed
+work remains available for inspection; there is no automatic stash, reset, force push, or
+bulk WIP commit. Ordinary Git commit hooks still run.
 
-Runner wymaga czystego drzewa również dla plików nieśledzonych. Po błędzie zachowuje diff.
-Nie ma automatycznego stasha, resetu, force push ani WIP z masowym stage. Commity projektu
-można weryfikować dodatkowo normalnymi hookami Git (runner ich nie omija).
+These are post-execution checks, not a sandbox against a deliberately disobedient agent.
+The selected CLI's permissions and execution environment are the actual access boundaries.
+Gate/preflight commands are trusted local commands outside the model sandbox.
 
-Publikacja wymaga `--publish`, robi zwykły push i idempotentnie tworzy/aktualizuje otwarty
-PR dla branch. Ustawia draft, gdy dowody są nieaktualne lub run jest niekompletny.
-Scalanie należy do człowieka. Adresowanie komentarzy wymaga osobnej jawnej komendy i
-filtruje autorów przed przekazaniem danych modelowi.
+`--publish` authorizes ordinary branch push and PR creation/update. Stale or incomplete evidence
+keeps the PR draft, including demotion of a previously ready PR. Merging remains a human action.
+PR comments are filtered by explicitly authorized authors before becoming agent instructions.

@@ -1,61 +1,72 @@
-# Operacje i ograniczenia
+# Operations and limitations
 
-## Aktualizacja instalacji
+## Updating an installation
 
-Toolkit jest kopiowany do `.workflow-kit`, a źródłowy commit zapisuje się w VERSION.
-Nie pobiera aktualizacji automatycznie. Aktualizacja wymaga czystego drzewa i osobnego
-review diffu: porównaj nową wersję toolkitu, przenieś świadomie zmienione pliki oraz zachowaj
-własny config.toml. Instalator nie nadpisuje istniejącego zestawu.
+The toolkit is vendored into `.workflow-kit`; VERSION records the source commit. Updates are
+not automatic. Review the new toolkit diff, preserve application-specific config.toml, and
+replace the selected files deliberately on a clean tree. The installer refuses to overwrite
+an existing installation. There is no automated update or artifact migration command.
 
-Pierwsza wersja nie posiada polecenia automatycznej aktualizacji ani migracji stanu.
-Po zmianie kontraktów zachowaj stare logi, przejrzyj artefakty i wykonaj ponowną weryfikację.
+This revision removes per-step routing. Existing changes with a single recorded engine can
+continue with that engine. Legacy receipts containing multiple engines are rejected. Preserve
+those artifacts for inspection and start a separately planned change rather than rewriting
+the audit trail to pretend the previous run used only one tool.
 
-## Przenoszenie istniejącej aplikacji
+## Moving an existing application
 
-Nie instaluj na ślepo w aktywnym projekcie z drugim runnerem. Najpierw zakończ przebiegi,
-wybierz jeden właściciel commita i publikacji, przejrzyj AGENTS.md/CLAUDE.md i kolizje skills.
-Canonical skills mają prefiks mw-, ale stare hooki mogą nadal reagować na tool calls.
-Wyłączenie lub aktualizację starej konfiguracji wykonuj jako osobną świadomą zmianę.
+Finish active runs before installing another runner. Review AGENTS.md, CLAUDE.md, skill
+collisions, and old hooks. Select one owner for commits and publication. The `mw-` prefix
+avoids built-in skill collisions but does not disable hooks from another installation.
+Handle retirement of old tooling as a separate reviewed change.
 
-Ten toolkit nie przenosi automatycznie ograniczeń MeshCore Guardian. Dla aplikacji Android
-zapisz reguły emulatora i zakazu fizycznych telefonów w AGENTS.md oraz przygotuj preflight,
-który przy braku możliwości sprawdzenia urządzeń kończy się błędem. Sam prefiks emulator-
-nie dowodzi nazwy AVD. Gates muszą również weryfikować docelowe urządzenie.
+Application restrictions are not copied from MeshCore Guardian. For Android projects, define
+physical-device and AVD rules in AGENTS.md and a fail-closed preflight check. An `emulator-`
+serial alone does not establish the AVD name; gate scripts must validate their target too.
 
-## Błąd sesji lub gate
+## Recovering from a session or gate failure
 
-1. Odczytaj lokalny komunikat runnera i wskazany log; nie publikuj logów bez przeglądu.
-2. Sprawdź branch, `git status` i diff. Runner nie usuwa niedokończonych zmian.
-3. Napraw przyczynę. Commituj tylko świadomie wybrane pliki. Nie obchodź uprawnień.
-4. Wznów tym samym lub innym silnikiem. Jeśli `.workflow/stuck` istnieje, po rozwiązaniu
-   problemu usuń świadomie ten marker (jest lokalny i ignorowany przez Git).
-5. Przy konflikcie/rozbieżnej historii address-pr zatrzymuje się na `--ff-only`.
+1. Read the reported local log; review it before sharing.
+2. Inspect branch, `git status`, and diff. Incomplete edits are preserved.
+3. Fix the cause and commit only deliberate changes. Do not bypass a denied tool operation.
+4. Resume with the originally selected engine. If `.workflow/stuck` exists, remove that local
+   marker deliberately after resolving the reported problem.
+5. Divergent history during address-pr stops at `--ff-only` for manual resolution.
 
-Nie ma automatycznych retry na błędy CLI ani bezterminowych pętli. Limity dotyczą iteracji
-review i liczby faz, a timeouts sesji i gates są konfigurowalne. Koszt sesji nie jest
-sumowany, ponieważ CLI mają różne formaty i mechanizmy rozliczeń; kontroluj limity konta.
+An attempt to use the other engine is rejected, including after losing local runtime state
+when the committed engine record is available. Different roadmap items can select different
+engines. A new clone can rebuild verification receipts using the recorded tool.
 
-## Zaufanie i dostęp
+There are no unbounded retries or automatic CLI retries. Limits cover review corrections,
+phase sessions, and timeouts. Timeout stops the process group and shell children. Aggregate
+provider billing is not computed; monitor your account's usage and spending limits.
 
-Commands gates/preflight są wykonywane poza sandboxem modelu przez lokalny runner i mają
-uprawnienia procesu użytkownika. Nie uruchamiaj go nad nieprzejrzaną konfiguracją z obcego PR.
-Hooki narzędzi i project trust pozostają konfiguracją wybranego CLI. Runner ich nie akceptuje
-ani nie przepisuje automatycznie. Najpierw przygotuj wymagany dostęp, następnie uruchom run.
+## Trust and access
 
-Kod sprawdza wynik sesji i Git po wykonaniu; nie zapobiega każdej szkodliwej operacji w trakcie.
-Dla pracy z niezaufanymi treściami używaj odpowiednio ograniczonego środowiska. W szczególności
-instrukcje „nie czytaj sekretów” nie zastępują izolacji sekretów od workspace.
+Gate and preflight commands execute as the local runner user, outside the model sandbox.
+Review project configuration before running it, particularly when reading an untrusted PR.
+CLI hook trust and project permissions remain engine-specific; the runner neither approves
+nor rewrites them. Configure required access before launching the complete run.
 
-## Zakres pierwszej wersji
+Post-session checks cannot prevent every operation during a session. Keep secrets outside
+the accessible workspace and use a suitable execution environment. Instructions forbidding
+secret access are not a replacement for isolation. Runtime logs are private local artifacts,
+not scanned or published automatically.
 
-- Wspólny runner i 14 canonical skills, adaptery Codex/Claude.
-- Jedna aktywna operacja na repozytorium; także worktrees są serializowane.
-- Lokalna praca domyślnie, GitHub PR i komentarze po `--publish`.
-- Brak GitLab, fork PR, automatycznego merge, usług scheduler/background monitor.
-- Brak automatycznego tworzenia issues, migracji starego workflow i aktualizacji instalacji.
-- Testy bez modeli sprawdzają runner, a nie jakość decyzji modelu lub rzeczywiste logowanie.
-- Pilotaż realnych CLI i publikacji wykonaj na małej zmianie w testowym repo aplikacji.
+Comments are identified by stable IDs. To revise an already handled decision, add a new
+comment rather than editing the old one. A changed snapshot while replies are pending stops
+the run for state inspection; reply markers help recover from uncertain publication responses.
 
-Timeout sesji/gate kończy grupę procesów wraz z dziećmi powłoki. Komentarze są rozpoznawane
-po ID; jeśli chcesz zmienić decyzję już obsłużoną, dodaj nowy komentarz zamiast edytować stary.
-Rozbieżność snapshotu przy oczekującej odpowiedzi zatrzymuje run i wymaga przeglądu stanu.
+## Current scope
+
+- Shared runner and 14 canonical skills; Codex or Claude for a complete change.
+- One active runner per repository, including its worktrees.
+- Local commits by default; GitHub publication and replies only with `--publish`.
+- No per-step engine selection, automatic failover, or engine changes on resume.
+- No GitLab, fork PR support, automatic merge, scheduler, or background monitor.
+- No automatic issue creation, migration of an old toolkit, or installation updates.
+- Fake-CLI tests verify orchestration, not model quality or actual provider authentication.
+- Active CI requires enabling the supplied template with appropriate GitHub permissions.
+
+Pilot each engine separately on a small change in a disposable application repository before
+relying on unattended runs. Pin working CLI/toolkit versions and repeat the pilot after
+adapter or permission changes.
